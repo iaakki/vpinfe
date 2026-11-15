@@ -66,6 +66,18 @@ class TestApiInputMapping(unittest.TestCase):
         self.assertTrue(ini.saved)
 
     @patch("frontend.api.ensure_tables_loaded", return_value=[])
+    def test_set_button_mapping_empty_value_unassigns(self, _mock_tables) -> None:
+        ini = self._build_ini()
+        api = API(ini)
+
+        result = api.set_button_mapping("joyexit", "")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(ini.config.get("Input", "joyexit"), "")
+        self.assertTrue(ini.saved)
+        self.assertEqual(api.get_joymaping()["joyexit"], "")
+
+    @patch("frontend.api.ensure_tables_loaded", return_value=[])
     def test_get_keymapping_includes_keytutorial(self, _mock_tables) -> None:
         ini = self._build_ini()
         api = API(ini)

@@ -251,11 +251,34 @@
     .mapping-item.active .mapping-value {
       color: #fff;
     }
+
+    .mapping-value.unset {
+      color: #666;
+    }
+
+    .mapping-clear {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 2;
+      padding: 4px 10px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.3);
+      color: #ccc;
+      font-size: 0.8rem;
+      cursor: pointer;
+    }
+
+    .mapping-clear:hover {
+      border-color: #f87171;
+      color: #f87171;
+    }
   </style>
 </head>
 <body>
   <h1>Gamepad Configuration</h1>
-  <div class="subtitle">Press ESC to exit</div>
+  <div class="subtitle">Press ESC to exit (or to cancel a mapping you picked)</div>
 
   <div class="container">
     <div class="section">
@@ -265,7 +288,7 @@
 
     <div class="section mappings-section">
       <h2>Button Mappings</h2>
-      <div class="status-message info" id="statusMessage">Click a mapping below, then press a gamepad button to assign it</div>
+      <div class="status-message info" id="statusMessage">Click a mapping below, then press a gamepad button to assign it, or Delete to clear it</div>
       <div class="mappings-grid" id="mappingsGrid"></div>
     </div>
   </div>
@@ -273,7 +296,8 @@
   <script>
     const vpin = new VPinFECore();
     vpin.init();
-    window.addEventListener('keydown', (e) => this.onKeyDown(e));
+    window.addEventListener('keydown', (e) => onKeyDown(e));
+    const IDLE_STATUS = "Click a mapping below, then press a gamepad button to assign it, or Delete to clear it";
     const buttonsGrid = document.getElementById("buttonsGrid");
     const mappingsGrid = document.getElementById("mappingsGrid");
     const statusMessage = document.getElementById("statusMessage");
@@ -331,12 +355,29 @@
         labelDiv.classList.add("mapping-label");
         labelDiv.textContent = label;
 
+        const value = currentMappings[key];
+        const isSet = value !== undefined && value !== null && String(value).trim() !== '';
         const valueDiv = document.createElement("div");
         valueDiv.classList.add("mapping-value");
-        valueDiv.textContent = `Button ${currentMappings[key] || 'Not Set'}`;
+        valueDiv.classList.toggle("unset", !isSet);
+        valueDiv.textContent = isSet ? `Button ${value}` : 'Not Set';
 
         div.appendChild(labelDiv);
         div.appendChild(valueDiv);
+
+        if (isSet) {
+          // One physical button often has to be freed for another action (the same button
+          // on two actions triggers both): give every assigned mapping a way to clear it.
+          const clearBtn = document.createElement("button");
+          clearBtn.classList.add("mapping-clear");
+          clearBtn.textContent = "Clear";
+          clearBtn.title = `Unassign ${label}`;
+          clearBtn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            clearMapping(key);
+          });
+          div.appendChild(clearBtn);
+        }
 
         div.addEventListener("click", () => selectMapping(key));
 
@@ -359,6 +400,35 @@
       setStatus(`Press a gamepad button to assign to "${label}"`, "waiting");
     }
 
+    function deselectMapping() {
+      document.querySelectorAll('.mapping-item').forEach(item => {
+        item.classList.remove('active');
+      });
+      activeMappingKey = null;
+      setStatus(IDLE_STATUS, "info");
+    }
+
+    async function clearMapping(key) {
+      const label = buttonMappings.find(m => m.key === key).label;
+      try {
+        const result = await vpin.call("set_button_mapping", key, "");
+        if (result.success) {
+          currentMappings[key] = "";
+          renderMappings();
+          activeMappingKey = null;
+          setStatus(`✓ ${label} unassigned`, "success");
+          setTimeout(() => {
+            if (!activeMappingKey) setStatus(IDLE_STATUS, "info");
+          }, 2000);
+        } else {
+          setStatus(`✗ Failed: ${result.message}`, "info");
+        }
+      } catch (error) {
+        console.error("Failed to clear mapping:", error);
+        setStatus(`✗ Error clearing mapping: ${error}`, "info");
+      }
+    }
+
     function setStatus(message, type = "info") {
       statusMessage.textContent = message;
       statusMessage.className = `status-message ${type}`;
@@ -378,13 +448,7 @@
           setStatus(`✓ ${label} mapped to button ${buttonIndex}`, "success");
 
           // Clear active mapping after success
-          setTimeout(() => {
-            document.querySelectorAll('.mapping-item').forEach(item => {
-              item.classList.remove('active');
-            });
-            activeMappingKey = null;
-            setStatus("Click a mapping below, then press a gamepad button to assign it", "info");
-          }, 2000);
+          setTimeout(deselectMapping, 2000);
         } else {
           setStatus(`✗ Failed: ${result.message}`, "info");
         }
@@ -435,7 +499,14 @@
 
     function onKeyDown(e) {
       if (e.key === 'Escape') {
-        vpin.call("close_app");
+        if (activeMappingKey) {
+          deselectMapping();   // first ESC cancels the picked mapping, the next one exits
+        } else {
+          vpin.call("close_app");
+        }
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && activeMappingKey) {
+        e.preventDefault();
+        clearMapping(activeMappingKey);
       }
     }
 
